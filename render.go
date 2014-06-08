@@ -49,6 +49,7 @@ import (
 	"strings"
 
 	"github.com/go-martini/martini"
+	"github.com/nicksnyder/go-i18n/i18n"
 )
 
 const (
@@ -70,6 +71,9 @@ var helperFuncs = template.FuncMap{
 	"current": func() (string, error) {
 		return "", nil
 	},
+	"T": func() (string, error) {
+		return "", fmt.Errorf("T called with no language defined")
+	},
 }
 
 // Render is a service that can be injected into a Martini handler. Render provides functions for easily writing JSON and
@@ -78,7 +82,7 @@ type Render interface {
 	// JSON writes the given status and JSON serialized version of the given value to the http.ResponseWriter.
 	JSON(status int, v interface{})
 	// HTML renders a html template specified by the name and writes the result and given status to the http.ResponseWriter.
-	HTML(status int, name string, v interface{}, htmlOpt ...HTMLOptions)
+	HTML(status int, name string, v interface{}, language string)
 	// XML writes the given status and XML serialized version of the given value to the http.ResponseWriter.
 	XML(status int, v interface{})
 	// Data writes the raw byte array to the http.ResponseWriter.
@@ -107,6 +111,10 @@ type Delims struct {
 type Options struct {
 	// Directory to load templates. Default is "templates"
 	Directory string
+	//
+	TranslationDirectory string
+	//
+	Languages []string
 	// Layout template name. Will not render a layout if "". Defaults to "".
 	Layout string
 	// Extensions to parse template files from. Defaults to [".tmpl"]
@@ -144,17 +152,26 @@ type HTMLOptions struct {
 func Renderer(options ...Options) martini.Handler {
 	opt := prepareOptions(options)
 	cs := prepareCharset(opt.Charset)
+	tf := prepareTranslationFunctions(opt.TranslationDirectory, opt.Languages)
 	t := compile(opt)
+
+	lt := make(map[string]*template.Template, len(tf))
+
+	// Adds the template sets to the pool variable
+	for language, function := range tf {
+		tmpTmpl, _ := t.Clone()
+		lt[language] = tmpTmpl.Funcs(template.FuncMap{"T": function})
+	}
+
 	return func(res http.ResponseWriter, req *http.Request, c martini.Context) {
-		var tc *template.Template
 		if martini.Env == martini.Dev {
 			// recompile for easy development
-			tc = compile(opt)
-		} else {
-			// use a clone of the initial template
-			tc, _ = t.Clone()
+			for language, function := range tf {
+				tmpTmpl := compile(opt)
+				lt[language] = tmpTmpl.Funcs(template.FuncMap{"T": function})
+			}
 		}
-		c.MapTo(&renderer{res, req, tc, opt, cs}, (*Render)(nil))
+		c.MapTo(&renderer{res, req, lt, opt, cs}, (*Render)(nil))
 	}
 }
 
@@ -176,6 +193,9 @@ func prepareOptions(options []Options) Options {
 	if len(opt.Directory) == 0 {
 		opt.Directory = "templates"
 	}
+	if len(opt.TranslationDirectory) == 0 {
+		opt.TranslationDirectory = "translations"
+	}
 	if len(opt.Extensions) == 0 {
 		opt.Extensions = []string{".tmpl"}
 	}
@@ -186,6 +206,23 @@ func prepareOptions(options []Options) Options {
 	return opt
 }
 
+// prepareTranslationFunctions maps languages to their respective
+// translation functions
+func prepareTranslationFunctions(dir string, languages []string) map[string]interface{} {
+	funcs := make(map[string]interface{}, len(languages))
+
+	for _, lang := range languages {
+		filename := lang + ".all.json"
+		i18n.MustLoadTranslationFile(filepath.Join(dir, filename))
+
+		var err error
+		funcs[lang], err = i18n.Tfunc(lang)
+		if err != nil {
+			panic(err)
+		}
+	}
+	return funcs
+}
 func compile(options Options) *template.Template {
 	dir := options.Directory
 	t := template.New(dir)
@@ -239,7 +276,7 @@ func getExt(s string) string {
 type renderer struct {
 	http.ResponseWriter
 	req             *http.Request
-	t               *template.Template
+	t               map[string]*template.Template
 	opt             Options
 	compiledCharset string
 }
@@ -266,15 +303,15 @@ func (r *renderer) JSON(status int, v interface{}) {
 	r.Write(result)
 }
 
-func (r *renderer) HTML(status int, name string, binding interface{}, htmlOpt ...HTMLOptions) {
-	opt := r.prepareHTMLOptions(htmlOpt)
+func (r *renderer) HTML(status int, name string, binding interface{}, language string) {
+	// opt := r.prepareHTMLOptions(htmlOpt)
 	// assign a layout if there is one
-	if len(opt.Layout) > 0 {
-		r.addYield(name, binding)
-		name = opt.Layout
-	}
+	// if len(opt.Layout) > 0 {
+	// 	r.addYield(name, binding)
+	// 	name = opt.Layout
+	// }
 
-	out, err := r.execute(name, binding)
+	out, err := r.execute(name, binding, language)
 	if err != nil {
 		http.Error(r, err.Error(), http.StatusInternalServerError)
 		return
@@ -335,34 +372,34 @@ func (r *renderer) Redirect(location string, status ...int) {
 }
 
 func (r *renderer) Template() *template.Template {
-	return r.t
+	return r.t["en-US"]
 }
 
-func (r *renderer) execute(name string, binding interface{}) (*bytes.Buffer, error) {
+func (r *renderer) execute(name string, binding interface{}, language string) (*bytes.Buffer, error) {
 	buf := new(bytes.Buffer)
-	return buf, r.t.ExecuteTemplate(buf, name, binding)
+	return buf, r.t[language].ExecuteTemplate(buf, name, binding)
 }
 
-func (r *renderer) addYield(name string, binding interface{}) {
-	funcs := template.FuncMap{
-		"yield": func() (template.HTML, error) {
-			buf, err := r.execute(name, binding)
-			// return safe html here since we are rendering our own template
-			return template.HTML(buf.String()), err
-		},
-		"current": func() (string, error) {
-			return name, nil
-		},
-	}
-	r.t.Funcs(funcs)
-}
-
-func (r *renderer) prepareHTMLOptions(htmlOpt []HTMLOptions) HTMLOptions {
-	if len(htmlOpt) > 0 {
-		return htmlOpt[0]
-	}
-
-	return HTMLOptions{
-		Layout: r.opt.Layout,
-	}
-}
+// func (r *renderer) addYield(name string, binding interface{}) {
+// 	funcs := template.FuncMap{
+// 		"yield": func() (template.HTML, error) {
+// 			buf, err := r.execute(name, binding)
+// 			// return safe html here since we are rendering our own template
+// 			return template.HTML(buf.String()), err
+// 		},
+// 		"current": func() (string, error) {
+// 			return name, nil
+// 		},
+// 	}
+// 	r.t.Funcs(funcs)
+// }
+//
+// func (r *renderer) prepareHTMLOptions(htmlOpt []HTMLOptions) HTMLOptions {
+// 	if len(htmlOpt) > 0 {
+// 		return htmlOpt[0]
+// 	}
+//
+// 	return HTMLOptions{
+// 		Layout: r.opt.Layout,
+// 	}
+// }
