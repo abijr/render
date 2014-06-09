@@ -111,9 +111,9 @@ type Delims struct {
 type Options struct {
 	// Directory to load templates. Default is "templates"
 	Directory string
-	//
+	// Directory to load translations. Default is "translations"
 	TranslationDirectory string
-	//
+	// Languages to load from TranslationDirectory. Default is []string{"en-US"}
 	Languages []string
 	// Layout template name. Will not render a layout if "". Defaults to "".
 	Layout string
