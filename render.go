@@ -39,10 +39,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -50,6 +52,7 @@ import (
 
 	"github.com/go-martini/martini"
 	"github.com/nicksnyder/go-i18n/i18n"
+	"github.com/nicksnyder/go-i18n/i18n/language"
 )
 
 const (
@@ -214,9 +217,10 @@ func prepareTranslationFunctions(dir string, languages []string) map[string]inte
 	for _, lang := range languages {
 		filename := lang + ".all.json"
 		i18n.MustLoadTranslationFile(filepath.Join(dir, filename))
+		log.Println("Loaded ", filepath.Join(dir, filename), " translation file")
 
 		var err error
-		funcs[lang], err = i18n.Tfunc(lang)
+		funcs[language.NormalizeTag(lang)], err = i18n.Tfunc(lang)
 		if err != nil {
 			panic(err)
 		}
@@ -372,10 +376,13 @@ func (r *renderer) Redirect(location string, status ...int) {
 }
 
 func (r *renderer) Template() *template.Template {
-	return r.t["en-US"]
+	return r.t["en-us"]
 }
 
 func (r *renderer) execute(name string, binding interface{}, language string) (*bytes.Buffer, error) {
+	if _, ok := r.t[language]; !ok {
+		return nil, errors.New("no such languge is loaded")
+	}
 	buf := new(bytes.Buffer)
 	return buf, r.t[language].ExecuteTemplate(buf, name, binding)
 }
