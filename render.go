@@ -381,7 +381,7 @@ func (r *renderer) Template() *template.Template {
 
 func (r *renderer) execute(name string, binding interface{}, language string) (*bytes.Buffer, error) {
 	if _, ok := r.t[language]; !ok {
-		return nil, errors.New("no such languge is loaded")
+		return nil, errors.New("`", language, "`", " is not a loaded language")
 	}
 	buf := new(bytes.Buffer)
 	return buf, r.t[language].ExecuteTemplate(buf, name, binding)
