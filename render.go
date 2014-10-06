@@ -39,7 +39,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -157,7 +156,7 @@ func Renderer(options ...Options) martini.Handler {
 	cs := prepareCharset(opt.Charset)
 	tf := prepareTranslationFunctions(opt.TranslationDirectory, opt.Languages)
 	t := compile(opt)
-
+	defLang := language.NormalizeTag(opt.Languages[0])
 	lt := make(map[string]*template.Template, len(tf))
 
 	// Adds the template sets to the pool variable
@@ -174,7 +173,7 @@ func Renderer(options ...Options) martini.Handler {
 				lt[language] = tmpTmpl.Funcs(template.FuncMap{"T": function})
 			}
 		}
-		c.MapTo(&renderer{res, req, lt, opt, cs}, (*Render)(nil))
+		c.MapTo(&renderer{res, req, lt, opt, cs, defLang}, (*Render)(nil))
 	}
 }
 
@@ -283,6 +282,7 @@ type renderer struct {
 	t               map[string]*template.Template
 	opt             Options
 	compiledCharset string
+	DefaultLang     string
 }
 
 func (r *renderer) JSON(status int, v interface{}) {
@@ -380,11 +380,10 @@ func (r *renderer) Template() *template.Template {
 }
 
 func (r *renderer) execute(name string, binding interface{}, language string) (*bytes.Buffer, error) {
-	if _, ok := r.t[language]; !ok {
-		str := language + " is not loaded"
-		return nil, errors.New(str)
-	}
 	buf := new(bytes.Buffer)
+	if _, ok := r.t[language]; !ok {
+		return buf, r.t[r.DefaultLang].ExecuteTemplate(buf, name, binding)
+	}
 	return buf, r.t[language].ExecuteTemplate(buf, name, binding)
 }
 
